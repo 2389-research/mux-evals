@@ -7,7 +7,7 @@ use clap::Parser;
 use colored::Colorize;
 use mux::agent::{MemoryTranscriptStore, TranscriptStore};
 use mux::hook::{Hook, HookAction, HookEvent, HookRegistry};
-use mux::llm::{AnthropicClient, ContentBlock, LlmClient, Message, Request, Role};
+use mux::llm::{AnthropicClient, ContentBlock, LlmClient, Message, OpenAIClient, Request, Role};
 use mux::tool::{Registry, Tool, ToolResult};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -41,8 +41,8 @@ struct Args {
     #[arg(long)]
     failures_only: bool,
 
-    /// Judge model for evaluating agent outputs (default: claude-sonnet-4-20250514)
-    #[arg(long, default_value = "claude-sonnet-4-20250514")]
+    /// Judge model for evaluating agent outputs (default: gpt-5-mini)
+    #[arg(long, default_value = "gpt-5-mini")]
     judge_model: String,
 }
 
@@ -124,12 +124,9 @@ REASON: The agent correctly completed the requested task."#,
 }
 
 fn create_judge() -> Option<Judge> {
-    let api_key = std::env::var("ANTHROPIC_API_KEY").ok()?;
-    let client = AnthropicClient::new(api_key);
-    Some(Judge::new(
-        Arc::new(client),
-        "claude-sonnet-4-20250514".to_string(),
-    ))
+    let api_key = std::env::var("OPENAI_API_KEY").ok()?;
+    let client = OpenAIClient::new(api_key);
+    Some(Judge::new(Arc::new(client), "gpt-5-mini".to_string()))
 }
 
 #[derive(Debug, Deserialize, Serialize)]
