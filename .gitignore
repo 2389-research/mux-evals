@@ -1,0 +1,16 @@
+# Build artifacts
+runners/rust/target/
+runners/go/mux-eval-runner
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Scratch files
+.scratch/
