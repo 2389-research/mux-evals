@@ -14,3 +14,7 @@ Thumbs.db
 
 # Scratch files
 .scratch/
+
+# Environment files
+.env
+.env.*
