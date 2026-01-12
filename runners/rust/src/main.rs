@@ -41,6 +41,10 @@ struct Args {
     #[arg(long)]
     failures_only: bool,
 
+    /// Output results as JSON
+    #[arg(long)]
+    json: bool,
+
     /// Judge model for evaluating agent outputs (default: gpt-5-mini)
     #[arg(long, default_value = "gpt-5-mini")]
     judge_model: String,
@@ -151,6 +155,32 @@ enum EvalResult {
     Skip(String),
 }
 
+/// JSON output format for each eval result
+#[derive(Serialize)]
+struct JsonEvalResult {
+    id: String,
+    name: String,
+    category: String,
+    status: String,
+    reason: Option<String>,
+}
+
+/// JSON output format for the full report
+#[derive(Serialize)]
+struct JsonReport {
+    runner: String,
+    results: Vec<JsonEvalResult>,
+    summary: JsonSummary,
+}
+
+#[derive(Serialize)]
+struct JsonSummary {
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+    total: usize,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Load .env file from current directory or parent directories
@@ -162,62 +192,101 @@ async fn main() -> Result<()> {
 
     // Create judge if API key is available
     let judge = create_judge();
-    if judge.is_some() {
-        println!("{}", "Judge agent enabled (using Claude)".dimmed());
+    if !args.json && judge.is_some() {
+        eprintln!("{}", "Judge agent enabled (using GPT-5-mini)".dimmed());
     }
 
-    println!("\n{} {} evals\n", "Running".bold().cyan(), evals.len());
+    if !args.json {
+        eprintln!("\n{} {} evals\n", "Running".bold().cyan(), evals.len());
+    }
 
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
+    let mut json_results = Vec::new();
 
     for eval in &evals {
         let result = run_eval(eval, args.verbose, judge.as_ref()).await;
 
-        match &result {
+        let (status, reason) = match &result {
             EvalResult::Pass => {
                 passed += 1;
-                if !args.failures_only {
-                    println!("{} {} - {}", "PASS".green().bold(), eval.id, eval.name);
-                }
+                ("pass".to_string(), None)
             }
-            EvalResult::Fail(reason) => {
+            EvalResult::Fail(r) => {
                 failed += 1;
-                println!(
-                    "{} {} - {}\n       {}",
-                    "FAIL".red().bold(),
-                    eval.id,
-                    eval.name,
-                    reason.dimmed()
-                );
+                ("fail".to_string(), Some(r.clone()))
             }
-            EvalResult::Skip(reason) => {
+            EvalResult::Skip(r) => {
                 skipped += 1;
-                if !args.failures_only {
+                ("skip".to_string(), Some(r.clone()))
+            }
+        };
+
+        if args.json {
+            json_results.push(JsonEvalResult {
+                id: eval.id.clone(),
+                name: eval.name.clone(),
+                category: eval.category.clone(),
+                status,
+                reason,
+            });
+        } else {
+            match &result {
+                EvalResult::Pass => {
+                    if !args.failures_only {
+                        println!("{} {} - {}", "PASS".green().bold(), eval.id, eval.name);
+                    }
+                }
+                EvalResult::Fail(reason) => {
                     println!(
                         "{} {} - {}\n       {}",
-                        "SKIP".yellow().bold(),
+                        "FAIL".red().bold(),
                         eval.id,
                         eval.name,
                         reason.dimmed()
                     );
                 }
+                EvalResult::Skip(reason) => {
+                    if !args.failures_only {
+                        println!(
+                            "{} {} - {}\n       {}",
+                            "SKIP".yellow().bold(),
+                            eval.id,
+                            eval.name,
+                            reason.dimmed()
+                        );
+                    }
+                }
             }
         }
     }
 
-    println!(
-        "\n{}: {} passed, {} failed, {} skipped\n",
-        "Results".bold(),
-        passed.to_string().green(),
-        if failed > 0 {
-            failed.to_string().red()
-        } else {
-            failed.to_string().normal()
-        },
-        skipped.to_string().yellow()
-    );
+    if args.json {
+        let report = JsonReport {
+            runner: "rust".to_string(),
+            results: json_results,
+            summary: JsonSummary {
+                passed,
+                failed,
+                skipped,
+                total: evals.len(),
+            },
+        };
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "\n{}: {} passed, {} failed, {} skipped\n",
+            "Results".bold(),
+            passed.to_string().green(),
+            if failed > 0 {
+                failed.to_string().red()
+            } else {
+                failed.to_string().normal()
+            },
+            skipped.to_string().yellow()
+        );
+    }
 
     if failed > 0 {
         std::process::exit(1);
@@ -561,6 +630,8 @@ impl Hook for LoggingHook {
             HookEvent::Iteration { agent_id, iteration } => {
                 format!("iteration:{}:{}", agent_id, iteration)
             }
+            // Handle other hook events generically
+            _ => format!("{:?}", event),
         };
         self.events.write().await.push(msg);
         Ok(HookAction::Continue)

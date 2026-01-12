@@ -38,6 +38,28 @@ type Result struct {
 	Reason string
 }
 
+// JSON output structures
+type JsonEvalResult struct {
+	ID       string  `json:"id"`
+	Name     string  `json:"name"`
+	Category string  `json:"category"`
+	Status   string  `json:"status"`
+	Reason   *string `json:"reason,omitempty"`
+}
+
+type JsonSummary struct {
+	Passed  int `json:"passed"`
+	Failed  int `json:"failed"`
+	Skipped int `json:"skipped"`
+	Total   int `json:"total"`
+}
+
+type JsonReport struct {
+	Runner  string           `json:"runner"`
+	Results []JsonEvalResult `json:"results"`
+	Summary JsonSummary      `json:"summary"`
+}
+
 // ANSI color codes
 const (
 	colorReset  = "\033[0m"
@@ -55,6 +77,7 @@ func main() {
 	id := flag.String("id", "", "Filter by specific eval ID")
 	verbose := flag.Bool("verbose", false, "Verbose output")
 	failuresOnly := flag.Bool("failures-only", false, "Only show failures")
+	jsonOutput := flag.Bool("json", false, "Output results as JSON")
 	flag.Parse()
 
 	evals, err := loadEvals(*evalsPath, *category, *id)
@@ -63,41 +86,83 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("\n%s%sRunning%s %d evals\n\n", colorBold, colorCyan, colorReset, len(evals))
+	if !*jsonOutput {
+		fmt.Fprintf(os.Stderr, "\n%s%sRunning%s %d evals\n\n", colorBold, colorCyan, colorReset, len(evals))
+	}
 
 	var passed, failed, skipped int
+	var jsonResults []JsonEvalResult
 
 	for _, eval := range evals {
 		result := runEval(eval, *verbose)
 
+		var status string
+		var reason *string
+
 		switch result.Status {
 		case Pass:
 			passed++
-			if !*failuresOnly {
-				fmt.Printf("%s%sPASS%s %s - %s\n", colorBold, colorGreen, colorReset, eval.ID, eval.Name)
-			}
+			status = "pass"
 		case Fail:
 			failed++
-			fmt.Printf("%s%sFAIL%s %s - %s\n       %s%s%s\n",
-				colorBold, colorRed, colorReset, eval.ID, eval.Name,
-				colorDim, result.Reason, colorReset)
+			status = "fail"
+			reason = &result.Reason
 		case Skip:
 			skipped++
-			if !*failuresOnly {
-				fmt.Printf("%s%sSKIP%s %s - %s\n       %s%s%s\n",
-					colorBold, colorYellow, colorReset, eval.ID, eval.Name,
+			status = "skip"
+			reason = &result.Reason
+		}
+
+		if *jsonOutput {
+			jsonResults = append(jsonResults, JsonEvalResult{
+				ID:       eval.ID,
+				Name:     eval.Name,
+				Category: eval.Category,
+				Status:   status,
+				Reason:   reason,
+			})
+		} else {
+			switch result.Status {
+			case Pass:
+				if !*failuresOnly {
+					fmt.Printf("%s%sPASS%s %s - %s\n", colorBold, colorGreen, colorReset, eval.ID, eval.Name)
+				}
+			case Fail:
+				fmt.Printf("%s%sFAIL%s %s - %s\n       %s%s%s\n",
+					colorBold, colorRed, colorReset, eval.ID, eval.Name,
 					colorDim, result.Reason, colorReset)
+			case Skip:
+				if !*failuresOnly {
+					fmt.Printf("%s%sSKIP%s %s - %s\n       %s%s%s\n",
+						colorBold, colorYellow, colorReset, eval.ID, eval.Name,
+						colorDim, result.Reason, colorReset)
+				}
 			}
 		}
 	}
 
-	fmt.Printf("\n%sResults%s: %s%d%s passed, ", colorBold, colorReset, colorGreen, passed, colorReset)
-	if failed > 0 {
-		fmt.Printf("%s%d%s failed, ", colorRed, failed, colorReset)
+	if *jsonOutput {
+		report := JsonReport{
+			Runner:  "go",
+			Results: jsonResults,
+			Summary: JsonSummary{
+				Passed:  passed,
+				Failed:  failed,
+				Skipped: skipped,
+				Total:   len(evals),
+			},
+		}
+		output, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Println(string(output))
 	} else {
-		fmt.Printf("%d failed, ", failed)
+		fmt.Printf("\n%sResults%s: %s%d%s passed, ", colorBold, colorReset, colorGreen, passed, colorReset)
+		if failed > 0 {
+			fmt.Printf("%s%d%s failed, ", colorRed, failed, colorReset)
+		} else {
+			fmt.Printf("%d failed, ", failed)
+		}
+		fmt.Printf("%s%d%s skipped\n\n", colorYellow, skipped, colorReset)
 	}
-	fmt.Printf("%s%d%s skipped\n\n", colorYellow, skipped, colorReset)
 
 	if failed > 0 {
 		os.Exit(1)
